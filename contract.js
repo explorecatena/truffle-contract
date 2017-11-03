@@ -140,7 +140,7 @@ var contract = (function(module) {
       var promisifiedFn = Utils.promisifyFunction(fn, C);
 
       return function() {
-        return promisifiedFn.apply(instance, arguments).then(C.getTransactionReceipt);
+        return promisifiedFn.apply(instance, arguments).then(C.syncTransaction);
       }
     },
     merge: function() {
@@ -391,26 +391,26 @@ var contract = (function(module) {
       });
     },
 
-    getTransactionReceipt: function(tx) {
+    syncTransaction: function(txHash) {
       var self = this;
       var timeout = this.synchronization_timeout || 240000;
       var start = new Date().getTime();
 
       return new Promise(function(accept, reject) {
         var makeAttempt = function() {
-          self.web3.eth.getTransactionReceipt(tx, function(err, receipt) {
+          self.web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
             if (err) return reject(err);
 
             if (receipt != null) {
               return accept({
-                tx: tx,
+                tx: txHash,
                 receipt: receipt,
                 logs: Utils.decodeLogs(self, receipt.logs)
               });
             }
 
             if (timeout > 0 && new Date().getTime() - start > timeout) {
-              return reject(new Error("Transaction " + tx + " wasn't processed in " + (timeout / 1000) + " seconds!"));
+              return reject(new Error("Transaction " + txHash + " wasn't processed in " + (timeout / 1000) + " seconds!"));
             }
 
             setTimeout(makeAttempt, 1000);
