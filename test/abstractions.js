@@ -144,6 +144,32 @@ describe("Abstractions", function() {
     }).then(done).catch(done);
   });
 
+  it("should allow splitting the transaction hash and synchronization operations", function(done) {
+    var example = null;
+    var txHash = null;
+    Example.new({gas: 3141592}).then(function(instance) {
+      example = instance;
+      return example.triggerEvent.sendTransaction();
+    }).then(function(tx) {
+      txHash = tx;
+      assert.isDefined(tx);
+      return example.getTransactionReceipt(txHash);
+    }).then(function(result) {
+      assert.equal(result.tx, txHash, "transaction hash doesn't match requested hash");
+      assert.isDefined(result.logs, "synchronized transaction didn't return any logs");
+      assert.isDefined(result.receipt, "synchronized transaction didn't return a receipt");
+      assert.isOk(result.tx.length > 42, "Unexpected transaction hash"); // There has to be a better way to do this.
+      assert.equal(result.tx, result.receipt.transactionHash, "Transaction had different hash than receipt");
+      assert.equal(result.logs.length, 1, "logs array expected to be 1");
+
+      var log = result.logs[0];
+
+      assert.equal("ExampleEvent", log.event);
+      assert.equal(accounts[0], log.args._from);
+      assert.equal(8, log.args.num); // 8 is a magic number inside Example.sol
+    }).then(done).catch(done);
+  });
+
   it("should trigger the fallback function when calling sendTransaction()", function() {
     var example = null;
     return Example.new({gas: 3141592}).then(function(instance) {
