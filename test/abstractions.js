@@ -153,7 +153,7 @@ describe("Abstractions", function() {
     }).then(function(tx) {
       txHash = tx;
       assert.isDefined(tx);
-      return example.getTransactionReceipt(txHash);
+      return Example.getTransactionReceipt(txHash);
     }).then(function(result) {
       assert.equal(result.tx, txHash, "transaction hash doesn't match requested hash");
       assert.isDefined(result.logs, "synchronized transaction didn't return any logs");

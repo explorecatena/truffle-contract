@@ -40,7 +40,7 @@ var contract = (function(module) {
         return false;
       }
     },
-    decodeLogs: function(C, instance, logs) {
+    decodeLogs: function(C, logs) {
       return logs.map(function(log) {
         var logABI = C.events[log.topics[0]];
 
@@ -140,34 +140,7 @@ var contract = (function(module) {
       var promisifiedFn = Utils.promisifyFunction(fn, C);
 
       return function() {
-        return promisifiedFn.apply(instance, arguments).then(function(tx) {
-          var timeout = C.synchronization_timeout || 240000;
-          var start = new Date().getTime();
-
-          return new Promise(function(accept, reject) {
-            var make_attempt = function() {
-              C.web3.eth.getTransactionReceipt(tx, function(err, receipt) {
-                if (err) return reject(err);
-
-                if (receipt != null) {
-                  return accept({
-                    tx: tx,
-                    receipt: receipt,
-                    logs: Utils.decodeLogs(C, instance, receipt.logs)
-                  });
-                }
-
-                if (timeout > 0 && new Date().getTime() - start > timeout) {
-                  return reject(new Error("Transaction " + tx + " wasn't processed in " + (timeout / 1000) + " seconds!"));
-                }
-
-                setTimeout(make_attempt, 1000);
-              });
-            };
-
-            make_attempt();
-          });
-        })
+        return promisifiedFn.apply(instance, arguments).then(C.getTransactionReceipt);
       }
     },
     merge: function() {
@@ -415,6 +388,36 @@ var contract = (function(module) {
         }
 
         return new self(self.address);
+      });
+    },
+
+    getTransactionReceipt: function(tx) {
+      var self = this;
+      var timeout = this.synchronization_timeout || 240000;
+      var start = new Date().getTime();
+
+      return new Promise(function(accept, reject) {
+        var makeAttempt = function() {
+          self.web3.eth.getTransactionReceipt(tx, function(err, receipt) {
+            if (err) return reject(err);
+
+            if (receipt != null) {
+              return accept({
+                tx: tx,
+                receipt: receipt,
+                logs: Utils.decodeLogs(self, receipt.logs)
+              });
+            }
+
+            if (timeout > 0 && new Date().getTime() - start > timeout) {
+              return reject(new Error("Transaction " + tx + " wasn't processed in " + (timeout / 1000) + " seconds!"));
+            }
+
+            setTimeout(makeAttempt, 1000);
+          });
+        };
+
+        makeAttempt();
       });
     },
 
