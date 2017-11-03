@@ -42,7 +42,7 @@ var contract = (function(module) {
         return false;
       }
     },
-    decodeLogs: function(C, instance, logs) {
+    decodeLogs: function(C, logs) {
       return logs.map(function(log) {
         var logABI = C.events[log.topics[0]];
 
@@ -139,58 +139,11 @@ var contract = (function(module) {
       };
     },
     synchronizeFunction: function(fn, instance, C) {
-      var self = this;
+      var promisifiedFn = Utils.promisifyFunction(fn, C);
+
       return function() {
-        var args = Array.prototype.slice.call(arguments);
-        var tx_params = {};
-        var last_arg = args[args.length - 1];
-
-        // It's only tx_params if it's an object and not a BigNumber.
-        if (Utils.is_object(last_arg) && !Utils.is_big_number(last_arg)) {
-          tx_params = args.pop();
-        }
-
-        tx_params = Utils.merge(C.class_defaults, tx_params);
-
-        return C.detectNetwork().then(function() {
-          return new Promise(function(accept, reject) {
-            var callback = function(error, tx) {
-              if (error != null) {
-                reject(error);
-                return;
-              }
-
-              var timeout = C.synchronization_timeout || 240000;
-              var start = new Date().getTime();
-
-              var make_attempt = function() {
-                C.web3.eth.getTransactionReceipt(tx, function(err, receipt) {
-                  if (err) return reject(err);
-
-                  if (receipt != null) {
-                    return accept({
-                      tx: tx,
-                      receipt: receipt,
-                      logs: Utils.decodeLogs(C, instance, receipt.logs)
-                    });
-                  }
-
-                  if (timeout > 0 && new Date().getTime() - start > timeout) {
-                    return reject(new Error("Transaction " + tx + " wasn't processed in " + (timeout / 1000) + " seconds!"));
-                  }
-
-                  setTimeout(make_attempt, 1000);
-                });
-              };
-
-              make_attempt();
-            };
-
-            args.push(tx_params, callback);
-            fn.apply(self, args);
-          });
-        });
-      };
+        return promisifiedFn.apply(instance, arguments).then(C.syncTransaction);
+      }
     },
     merge: function() {
       var merged = {};
@@ -437,6 +390,36 @@ var contract = (function(module) {
         }
 
         return new self(self.address);
+      });
+    },
+
+    syncTransaction: function(txHash) {
+      var self = this;
+      var timeout = this.synchronization_timeout || 240000;
+      var start = new Date().getTime();
+
+      return new Promise(function(accept, reject) {
+        var makeAttempt = function() {
+          self.web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+            if (err) return reject(err);
+
+            if (receipt != null) {
+              return accept({
+                tx: txHash,
+                receipt: receipt,
+                logs: Utils.decodeLogs(self, receipt.logs)
+              });
+            }
+
+            if (timeout > 0 && new Date().getTime() - start > timeout) {
+              return reject(new Error("Transaction " + txHash + " wasn't processed in " + (timeout / 1000) + " seconds!"));
+            }
+
+            setTimeout(makeAttempt, 1000);
+          });
+        };
+
+        makeAttempt();
       });
     },
 
@@ -15853,29 +15836,52 @@ module.exports = TruffleContractSchema;
 }));
 },{"./core":65}],68:[function(require,module,exports){
 module.exports={
-  "_from": "truffle-contract-schema@^1.0.0",
+  "_args": [
+    [
+      {
+        "raw": "truffle-contract-schema@^1.0.0",
+        "scope": null,
+        "escapedName": "truffle-contract-schema",
+        "name": "truffle-contract-schema",
+        "rawSpec": "^1.0.0",
+        "spec": ">=1.0.0 <2.0.0",
+        "type": "range"
+      },
+      "/home/alan/src/github.com/trufflesuite/truffle-contract"
+    ]
+  ],
+  "_from": "truffle-contract-schema@>=1.0.0 <2.0.0",
   "_id": "truffle-contract-schema@1.0.1",
-  "_inBundle": false,
-  "_integrity": "sha512-37ZO9FVvmW/PZz/sh00LAz7HN2U4FHERuxI4mCbUR6h3r2cRgZ4YBfzHuAHOnZlrVzM1qx/Dx/1Ng3UyfWseEA==",
+  "_inCache": true,
   "_location": "/truffle-contract-schema",
+  "_nodeVersion": "6.9.1",
+  "_npmOperationalInternal": {
+    "host": "s3://npm-registry-packages",
+    "tmp": "tmp/truffle-contract-schema-1.0.1.tgz_1509468669623_0.2811872414313257"
+  },
+  "_npmUser": {
+    "name": "gnidan",
+    "email": "nick@gnidan.org"
+  },
+  "_npmVersion": "5.3.0",
   "_phantomChildren": {},
   "_requested": {
-    "type": "range",
-    "registry": true,
     "raw": "truffle-contract-schema@^1.0.0",
-    "name": "truffle-contract-schema",
+    "scope": null,
     "escapedName": "truffle-contract-schema",
+    "name": "truffle-contract-schema",
     "rawSpec": "^1.0.0",
-    "saveSpec": null,
-    "fetchSpec": "^1.0.0"
+    "spec": ">=1.0.0 <2.0.0",
+    "type": "range"
   },
   "_requiredBy": [
     "/"
   ],
   "_resolved": "https://registry.npmjs.org/truffle-contract-schema/-/truffle-contract-schema-1.0.1.tgz",
   "_shasum": "08ceaefe71062a8ac9ab881a77a30fda3744176e",
+  "_shrinkwrap": null,
   "_spec": "truffle-contract-schema@^1.0.0",
-  "_where": "/Users/gnidan/src/work/release/truffle/dependencies/truffle-contract",
+  "_where": "/home/alan/src/github.com/trufflesuite/truffle-contract",
   "author": {
     "name": "Tim Coulter",
     "email": "tim.coulter@consensys.net"
@@ -15883,17 +15889,22 @@ module.exports={
   "bugs": {
     "url": "https://github.com/trufflesuite/truffle-schema/issues"
   },
-  "bundleDependencies": false,
   "dependencies": {
     "ajv": "^5.1.1",
     "crypto-js": "^3.1.9-1"
   },
-  "deprecated": false,
   "description": "JSON schema for contract artifacts",
   "devDependencies": {
     "mocha": "^3.2.0",
     "solc": "^0.4.16"
   },
+  "directories": {},
+  "dist": {
+    "integrity": "sha512-37ZO9FVvmW/PZz/sh00LAz7HN2U4FHERuxI4mCbUR6h3r2cRgZ4YBfzHuAHOnZlrVzM1qx/Dx/1Ng3UyfWseEA==",
+    "shasum": "08ceaefe71062a8ac9ab881a77a30fda3744176e",
+    "tarball": "https://registry.npmjs.org/truffle-contract-schema/-/truffle-contract-schema-1.0.1.tgz"
+  },
+  "gitHead": "7337cf5f782dbf5dd52fd952c2752eb69b02c622",
   "homepage": "https://github.com/trufflesuite/truffle-schema#readme",
   "keywords": [
     "ethereum",
@@ -15904,7 +15915,23 @@ module.exports={
   ],
   "license": "MIT",
   "main": "index.js",
+  "maintainers": [
+    {
+      "name": "tcoulter",
+      "email": "tim@timothyjcoulter.com"
+    },
+    {
+      "name": "benjamincburns",
+      "email": "benjamin.c.burns@gmail.com"
+    },
+    {
+      "name": "gnidan",
+      "email": "nick@gnidan.org"
+    }
+  ],
   "name": "truffle-contract-schema",
+  "optionalDependencies": {},
+  "readme": "ERROR: No README data found!",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/trufflesuite/truffle-schema.git"
