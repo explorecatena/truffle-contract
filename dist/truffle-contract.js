@@ -1,4 +1,4 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function(){function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s}return e})()({1:[function(require,module,exports){
 (function (global){
 var ethJSABI = require("ethjs-abi");
 var BlockchainUtils = require("truffle-blockchain-utils");
@@ -393,6 +393,24 @@ var contract = (function(module) {
       });
     },
 
+    getTransaction: function(txHash) {
+      var self = this;
+      return new Promise(function(accept, reject) {
+        self.web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+          if (err) return reject(err);
+
+          if (receipt == null) {
+            return accept(receipt);
+          }
+          return accept({
+            tx: txHash,
+            receipt: receipt,
+            logs: Utils.decodeLogs(self, receipt.logs)
+          });
+        });
+      });
+    },
+
     syncTransaction: function(txHash) {
       var self = this;
       var timeout = this.synchronization_timeout || 240000;
@@ -400,23 +418,17 @@ var contract = (function(module) {
 
       return new Promise(function(accept, reject) {
         var makeAttempt = function() {
-          self.web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
-            if (err) return reject(err);
-
-            if (receipt != null) {
-              return accept({
-                tx: txHash,
-                receipt: receipt,
-                logs: Utils.decodeLogs(self, receipt.logs)
-              });
-            }
-
-            if (timeout > 0 && new Date().getTime() - start > timeout) {
-              return reject(new Error("Transaction " + txHash + " wasn't processed in " + (timeout / 1000) + " seconds!"));
-            }
-
-            setTimeout(makeAttempt, 1000);
-          });
+          self.getTransaction(txHash)
+            .catch(reject)
+            .then(function(receipt) {
+              if (receipt) {
+                return accept(receipt);
+              }
+              if (timeout > 0 && new Date().getTime() - start > timeout) {
+                return reject(new Error("Transaction " + txHash + " wasn't processed in " + (timeout / 1000) + " seconds!"));
+              }
+              setTimeout(makeAttempt, 1000);
+            });
         };
 
         makeAttempt();
@@ -1069,6 +1081,7 @@ var META_SUPPORT_DATA = ['/properties'];
 function Ajv(opts) {
   if (!(this instanceof Ajv)) return new Ajv(opts);
   opts = this._opts = util.copy(opts) || {};
+  setLogger(this);
   this._schemas = {};
   this._refs = {};
   this._fragments = {};
@@ -1142,11 +1155,12 @@ function compile(schema, _meta) {
  * @param {String} key Optional schema key. Can be passed to `validate` method instead of schema object or id/ref. One schema per instance can have empty `id` and `key`.
  * @param {Boolean} _skipValidation true to skip schema validation. Used internally, option validateSchema should be used instead.
  * @param {Boolean} _meta true if schema is a meta-schema. Used internally, addMetaSchema should be used instead.
+ * @return {Ajv} this for method chaining
  */
 function addSchema(schema, key, _skipValidation, _meta) {
   if (Array.isArray(schema)){
     for (var i=0; i<schema.length; i++) this.addSchema(schema[i], undefined, _skipValidation, _meta);
-    return;
+    return this;
   }
   var id = this._getId(schema);
   if (id !== undefined && typeof id != 'string')
@@ -1154,6 +1168,7 @@ function addSchema(schema, key, _skipValidation, _meta) {
   key = resolve.normalizeId(key || id);
   checkUnique(this, key);
   this._schemas[key] = this._addSchema(schema, _skipValidation, _meta, true);
+  return this;
 }
 
 
@@ -1164,9 +1179,11 @@ function addSchema(schema, key, _skipValidation, _meta) {
  * @param {Object} schema schema object
  * @param {String} key optional schema key
  * @param {Boolean} skipValidation true to skip schema validation, can be used to override validateSchema option for meta-schema
+ * @return {Ajv} this for method chaining
  */
 function addMetaSchema(schema, key, skipValidation) {
   this.addSchema(schema, key, skipValidation, true);
+  return this;
 }
 
 
@@ -1183,7 +1200,7 @@ function validateSchema(schema, throwOrLogError) {
     throw new Error('$schema must be a string');
   $schema = $schema || this._opts.defaultMeta || defaultMeta(this);
   if (!$schema) {
-    console.warn('meta-schema not available');
+    this.logger.warn('meta-schema not available');
     this.errors = null;
     return true;
   }
@@ -1196,7 +1213,7 @@ function validateSchema(schema, throwOrLogError) {
   finally { this._formats.uri = currentUriFormat; }
   if (!valid && throwOrLogError) {
     var message = 'schema is invalid: ' + this.errorsText();
-    if (this._opts.validateSchema == 'log') console.error(message);
+    if (this._opts.validateSchema == 'log') this.logger.error(message);
     else throw new Error(message);
   }
   return valid;
@@ -1263,25 +1280,26 @@ function _getSchemaObj(self, keyRef) {
  * Even if schema is referenced by other schemas it still can be removed as other schemas have local references.
  * @this   Ajv
  * @param  {String|Object|RegExp} schemaKeyRef key, ref, pattern to match key/ref or schema object
+ * @return {Ajv} this for method chaining
  */
 function removeSchema(schemaKeyRef) {
   if (schemaKeyRef instanceof RegExp) {
     _removeAllSchemas(this, this._schemas, schemaKeyRef);
     _removeAllSchemas(this, this._refs, schemaKeyRef);
-    return;
+    return this;
   }
   switch (typeof schemaKeyRef) {
     case 'undefined':
       _removeAllSchemas(this, this._schemas);
       _removeAllSchemas(this, this._refs);
       this._cache.clear();
-      return;
+      return this;
     case 'string':
       var schemaObj = _getSchemaObj(this, schemaKeyRef);
       if (schemaObj) this._cache.del(schemaObj.cacheKey);
       delete this._schemas[schemaKeyRef];
       delete this._refs[schemaKeyRef];
-      return;
+      return this;
     case 'object':
       var serialize = this._opts.serialize;
       var cacheKey = serialize ? serialize(schemaKeyRef) : schemaKeyRef;
@@ -1293,6 +1311,7 @@ function removeSchema(schemaKeyRef) {
         delete this._refs[id];
       }
   }
+  return this;
 }
 
 
@@ -1395,15 +1414,15 @@ function chooseGetId(opts) {
   }
 }
 
-
+/* @this   Ajv */
 function _getId(schema) {
-  if (schema.$id) console.warn('schema $id ignored', schema.$id);
+  if (schema.$id) this.logger.warn('schema $id ignored', schema.$id);
   return schema.id;
 }
 
-
+/* @this   Ajv */
 function _get$Id(schema) {
-  if (schema.id) console.warn('schema id ignored', schema.id);
+  if (schema.id) this.logger.warn('schema id ignored', schema.id);
   return schema.$id;
 }
 
@@ -1443,10 +1462,12 @@ function errorsText(errors, options) {
  * @this   Ajv
  * @param {String} name format name
  * @param {String|RegExp|Function} format string is converted to RegExp; function should return boolean (true when valid)
+ * @return {Ajv} this for method chaining
  */
 function addFormat(name, format) {
   if (typeof format == 'string') format = new RegExp(format);
   this._formats[name] = format;
+  return this;
 }
 
 
@@ -1492,6 +1513,22 @@ function getMetaSchemaOptions(self) {
     delete metaOpts[META_IGNORE_OPTIONS[i]];
   return metaOpts;
 }
+
+
+function setLogger(self) {
+  var logger = self._opts.logger;
+  if (logger === false) {
+    self.logger = {log: noop, warn: noop, error: noop};
+  } else {
+    if (logger === undefined) logger = console;
+    if (!(typeof logger == 'object' && logger.log && logger.warn && logger.error))
+      throw new Error('logger must implement log, warn and error methods');
+    self.logger = logger;
+  }
+}
+
+
+function noop() {}
 
 },{"./$data":3,"./cache":5,"./compile":10,"./compile/async":7,"./compile/error_classes":8,"./compile/formats":9,"./compile/resolve":11,"./compile/rules":12,"./compile/schema_obj":13,"./compile/util":15,"./keyword":39,"./patternGroups":40,"./refs/$data.json":41,"./refs/json-schema-draft-06.json":42,"co":47,"fast-json-stable-stringify":51}],5:[function(require,module,exports){
 'use strict';
@@ -1926,6 +1963,7 @@ function compile(schema, root, localRefs, baseId) {
       useCustomRule: useCustomRule,
       opts: opts,
       formats: formats,
+      logger: self.logger,
       self: self
     });
 
@@ -1968,7 +2006,7 @@ function compile(schema, root, localRefs, baseId) {
 
       refVal[0] = validate;
     } catch(e) {
-      console.error('Error compiling schema, function code:', sourceCode);
+      self.logger.error('Error compiling schema, function code:', sourceCode);
       throw e;
     }
 
@@ -2082,7 +2120,7 @@ function compile(schema, root, localRefs, baseId) {
       var valid = validateSchema(schema);
       if (!valid) {
         var message = 'keyword schema is invalid: ' + self.errorsText(validateSchema.errors);
-        if (self._opts.validateSchema == 'log') console.error(message);
+        if (self._opts.validateSchema == 'log') self.logger.error(message);
         else throw new Error(message);
       }
     }
@@ -2496,7 +2534,7 @@ module.exports = function rules() {
 
   var ALL = [ 'type' ];
   var KEYWORDS = [
-    'additionalItems', '$schema', 'id', 'title',
+    'additionalItems', '$schema', '$id', 'id', 'title',
     'description', 'default', 'definitions'
   ];
   var TYPES = [ 'number', 'integer', 'string', 'array', 'object', 'boolean', 'null' ];
@@ -4007,7 +4045,7 @@ module.exports = function generate_format(it, $keyword, $ruleType) {
     var $format = it.formats[$schema];
     if (!$format) {
       if ($unknownFormats == 'ignore') {
-        console.warn('unknown format "' + $schema + '" ignored in schema at path "' + it.errSchemaPath + '"');
+        it.logger.warn('unknown format "' + $schema + '" ignored in schema at path "' + it.errSchemaPath + '"');
         if ($breakOnError) {
           out += ' if (true) { ';
         }
@@ -5131,7 +5169,7 @@ module.exports = function generate_ref(it, $keyword, $ruleType) {
     if ($refVal === undefined) {
       var $message = it.MissingRefError.message(it.baseId, $schema);
       if (it.opts.missingRefs == 'fail') {
-        console.error($message);
+        it.logger.error($message);
         var $$outStack = $$outStack || [];
         $$outStack.push(out);
         out = ''; /* istanbul ignore else */
@@ -5162,7 +5200,7 @@ module.exports = function generate_ref(it, $keyword, $ruleType) {
           out += ' if (false) { ';
         }
       } else if (it.opts.missingRefs == 'ignore') {
-        console.warn($message);
+        it.logger.warn($message);
         if ($breakOnError) {
           out += ' if (true) { ';
         }
@@ -5700,7 +5738,7 @@ module.exports = function generate_validate(it, $keyword, $ruleType) {
       throw new Error('$ref: validation keywords used in schema at path "' + it.errSchemaPath + '" (see option extendRefs)');
     } else if (it.opts.extendRefs !== true) {
       $refKeywords = false;
-      console.warn('$ref: keywords ignored in schema at path "' + it.errSchemaPath + '"');
+      it.logger.warn('$ref: keywords ignored in schema at path "' + it.errSchemaPath + '"');
     }
   }
   if ($typeSchema) {
@@ -5858,7 +5896,7 @@ module.exports = function generate_validate(it, $keyword, $ruleType) {
     }
   } else {
     if (it.opts.v5 && it.schema.patternGroups) {
-      console.warn('keyword "patternGroups" is deprecated and disabled. Use option patternGroups: true to enable.');
+      it.logger.warn('keyword "patternGroups" is deprecated and disabled. Use option patternGroups: true to enable.');
     }
     var arr2 = it.RULES;
     if (arr2) {
@@ -6023,10 +6061,10 @@ module.exports = function generate_validate(it, $keyword, $ruleType) {
   }
 
   function $shouldUseRule($rule) {
-    return it.schema[$rule.keyword] !== undefined || ($rule.implements && $ruleImlementsSomeKeyword($rule));
+    return it.schema[$rule.keyword] !== undefined || ($rule.implements && $ruleImplementsSomeKeyword($rule));
   }
 
-  function $ruleImlementsSomeKeyword($rule) {
+  function $ruleImplementsSomeKeyword($rule) {
     var impl = $rule.implements;
     for (var i = 0; i < impl.length; i++)
       if (it.schema[impl[i]] !== undefined) return true;
@@ -6051,6 +6089,7 @@ module.exports = {
  * @this  Ajv
  * @param {String} keyword custom keyword, should be unique (including different from all standard, custom and macro keywords).
  * @param {Object} definition keyword definition object with properties `type` (type(s) which the keyword applies to), `validate` or `compile`.
+ * @return {Ajv} this for method chaining
  */
 function addKeyword(keyword, definition) {
   /* jshint validthis: true */
@@ -6128,6 +6167,8 @@ function addKeyword(keyword, definition) {
   function checkDataType(dataType) {
     if (!RULES.types[dataType]) throw new Error('Unknown type ' + dataType);
   }
+
+  return this;
 }
 
 
@@ -6148,6 +6189,7 @@ function getKeyword(keyword) {
  * Remove keyword
  * @this  Ajv
  * @param {String} keyword pre-defined or custom keyword.
+ * @return {Ajv} this for method chaining
  */
 function removeKeyword(keyword) {
   /* jshint validthis: true */
@@ -6164,6 +6206,7 @@ function removeKeyword(keyword) {
       }
     }
   }
+  return this;
 }
 
 },{"./dotjs/custom":24}],40:[function(require,module,exports){
@@ -6283,6 +6326,10 @@ module.exports={
             "type": "string"
         },
         "default": {},
+        "examples": {
+            "type": "array",
+            "items": {}
+        },
         "multipleOf": {
             "type": "number",
             "exclusiveMinimum": 0
@@ -6392,6 +6439,8 @@ for (var i = 0, len = code.length; i < len; ++i) {
   revLookup[code.charCodeAt(i)] = i
 }
 
+// Support decoding URL-safe base64 strings, as Node.js does.
+// See: https://en.wikipedia.org/wiki/Base64#URL_applications
 revLookup['-'.charCodeAt(0)] = 62
 revLookup['_'.charCodeAt(0)] = 63
 
@@ -6453,7 +6502,7 @@ function encodeChunk (uint8, start, end) {
   var tmp
   var output = []
   for (var i = start; i < end; i += 3) {
-    tmp = (uint8[i] << 16) + (uint8[i + 1] << 8) + (uint8[i + 2])
+    tmp = ((uint8[i] << 16) & 0xFF0000) + ((uint8[i + 1] << 8) & 0xFF00) + (uint8[i + 2] & 0xFF)
     output.push(tripletToBase64(tmp))
   }
   return output.join('')
@@ -9978,6 +10027,24 @@ function typedArraySupport () {
   }
 }
 
+Object.defineProperty(Buffer.prototype, 'parent', {
+  get: function () {
+    if (!(this instanceof Buffer)) {
+      return undefined
+    }
+    return this.buffer
+  }
+})
+
+Object.defineProperty(Buffer.prototype, 'offset', {
+  get: function () {
+    if (!(this instanceof Buffer)) {
+      return undefined
+    }
+    return this.byteOffset
+  }
+})
+
 function createBuffer (length) {
   if (length > K_MAX_LENGTH) {
     throw new RangeError('Invalid typed array length')
@@ -10029,7 +10096,7 @@ function from (value, encodingOrOffset, length) {
     throw new TypeError('"value" argument must not be a number')
   }
 
-  if (isArrayBuffer(value)) {
+  if (isArrayBuffer(value) || (value && isArrayBuffer(value.buffer))) {
     return fromArrayBuffer(value, encodingOrOffset, length)
   }
 
@@ -10059,7 +10126,7 @@ Buffer.__proto__ = Uint8Array
 
 function assertSize (size) {
   if (typeof size !== 'number') {
-    throw new TypeError('"size" argument must be a number')
+    throw new TypeError('"size" argument must be of type number')
   } else if (size < 0) {
     throw new RangeError('"size" argument must not be negative')
   }
@@ -10113,7 +10180,7 @@ function fromString (string, encoding) {
   }
 
   if (!Buffer.isEncoding(encoding)) {
-    throw new TypeError('"encoding" must be a valid string encoding')
+    throw new TypeError('Unknown encoding: ' + encoding)
   }
 
   var length = byteLength(string, encoding) | 0
@@ -10142,11 +10209,11 @@ function fromArrayLike (array) {
 
 function fromArrayBuffer (array, byteOffset, length) {
   if (byteOffset < 0 || array.byteLength < byteOffset) {
-    throw new RangeError('\'offset\' is out of bounds')
+    throw new RangeError('"offset" is outside of buffer bounds')
   }
 
   if (array.byteLength < byteOffset + (length || 0)) {
-    throw new RangeError('\'length\' is out of bounds')
+    throw new RangeError('"length" is outside of buffer bounds')
   }
 
   var buf
@@ -10177,7 +10244,7 @@ function fromObject (obj) {
   }
 
   if (obj) {
-    if (isArrayBufferView(obj) || 'length' in obj) {
+    if (ArrayBuffer.isView(obj) || 'length' in obj) {
       if (typeof obj.length !== 'number' || numberIsNaN(obj.length)) {
         return createBuffer(0)
       }
@@ -10189,7 +10256,7 @@ function fromObject (obj) {
     }
   }
 
-  throw new TypeError('First argument must be a string, Buffer, ArrayBuffer, Array, or array-like object.')
+  throw new TypeError('The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.')
 }
 
 function checked (length) {
@@ -10276,6 +10343,9 @@ Buffer.concat = function concat (list, length) {
   var pos = 0
   for (i = 0; i < list.length; ++i) {
     var buf = list[i]
+    if (ArrayBuffer.isView(buf)) {
+      buf = Buffer.from(buf)
+    }
     if (!Buffer.isBuffer(buf)) {
       throw new TypeError('"list" argument must be an Array of Buffers')
     }
@@ -10289,7 +10359,7 @@ function byteLength (string, encoding) {
   if (Buffer.isBuffer(string)) {
     return string.length
   }
-  if (isArrayBufferView(string) || isArrayBuffer(string)) {
+  if (ArrayBuffer.isView(string) || isArrayBuffer(string)) {
     return string.byteLength
   }
   if (typeof string !== 'string') {
@@ -10456,6 +10526,8 @@ Buffer.prototype.toString = function toString () {
   if (arguments.length === 0) return utf8Slice(this, 0, length)
   return slowToString.apply(this, arguments)
 }
+
+Buffer.prototype.toLocaleString = Buffer.prototype.toString
 
 Buffer.prototype.equals = function equals (b) {
   if (!Buffer.isBuffer(b)) throw new TypeError('Argument must be a Buffer')
@@ -10677,9 +10749,7 @@ function hexWrite (buf, string, offset, length) {
     }
   }
 
-  // must be an even number of digits
   var strLen = string.length
-  if (strLen % 2 !== 0) throw new TypeError('Invalid hex string')
 
   if (length > strLen / 2) {
     length = strLen / 2
@@ -11372,6 +11442,7 @@ Buffer.prototype.writeDoubleBE = function writeDoubleBE (value, offset, noAssert
 
 // copy(targetBuffer, targetStart=0, sourceStart=0, sourceEnd=buffer.length)
 Buffer.prototype.copy = function copy (target, targetStart, start, end) {
+  if (!Buffer.isBuffer(target)) throw new TypeError('argument should be a Buffer')
   if (!start) start = 0
   if (!end && end !== 0) end = this.length
   if (targetStart >= target.length) targetStart = target.length
@@ -11386,7 +11457,7 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   if (targetStart < 0) {
     throw new RangeError('targetStart out of bounds')
   }
-  if (start < 0 || start >= this.length) throw new RangeError('sourceStart out of bounds')
+  if (start < 0 || start >= this.length) throw new RangeError('Index out of range')
   if (end < 0) throw new RangeError('sourceEnd out of bounds')
 
   // Are we oob?
@@ -11396,22 +11467,19 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   }
 
   var len = end - start
-  var i
 
-  if (this === target && start < targetStart && targetStart < end) {
+  if (this === target && typeof Uint8Array.prototype.copyWithin === 'function') {
+    // Use built-in when available, missing from IE11
+    this.copyWithin(targetStart, start, end)
+  } else if (this === target && start < targetStart && targetStart < end) {
     // descending copy from end
-    for (i = len - 1; i >= 0; --i) {
-      target[i + targetStart] = this[i + start]
-    }
-  } else if (len < 1000) {
-    // ascending copy from start
-    for (i = 0; i < len; ++i) {
+    for (var i = len - 1; i >= 0; --i) {
       target[i + targetStart] = this[i + start]
     }
   } else {
     Uint8Array.prototype.set.call(
       target,
-      this.subarray(start, start + len),
+      this.subarray(start, end),
       targetStart
     )
   }
@@ -11434,17 +11502,19 @@ Buffer.prototype.fill = function fill (val, start, end, encoding) {
       encoding = end
       end = this.length
     }
-    if (val.length === 1) {
-      var code = val.charCodeAt(0)
-      if (code < 256) {
-        val = code
-      }
-    }
     if (encoding !== undefined && typeof encoding !== 'string') {
       throw new TypeError('encoding must be a string')
     }
     if (typeof encoding === 'string' && !Buffer.isEncoding(encoding)) {
       throw new TypeError('Unknown encoding: ' + encoding)
+    }
+    if (val.length === 1) {
+      var code = val.charCodeAt(0)
+      if ((encoding === 'utf8' && code < 128) ||
+          encoding === 'latin1') {
+        // Fast path: If `val` fits into a single byte, use that numeric value.
+        val = code
+      }
     }
   } else if (typeof val === 'number') {
     val = val & 255
@@ -11474,6 +11544,10 @@ Buffer.prototype.fill = function fill (val, start, end, encoding) {
       ? val
       : new Buffer(val, encoding)
     var len = bytes.length
+    if (len === 0) {
+      throw new TypeError('The value "' + val +
+        '" is invalid for argument "value"')
+    }
     for (i = 0; i < end - start; ++i) {
       this[i + start] = bytes[i % len]
     }
@@ -11488,6 +11562,8 @@ Buffer.prototype.fill = function fill (val, start, end, encoding) {
 var INVALID_BASE64_RE = /[^+/0-9A-Za-z-_]/g
 
 function base64clean (str) {
+  // Node takes equal signs as end of the Base64 encoding
+  str = str.split('=')[0]
   // Node strips out invalid characters like \n and \t from the string, base64-js does not
   str = str.trim().replace(INVALID_BASE64_RE, '')
   // Node converts strings with length < 2 to ''
@@ -11627,11 +11703,6 @@ function isArrayBuffer (obj) {
   return obj instanceof ArrayBuffer ||
     (obj != null && obj.constructor != null && obj.constructor.name === 'ArrayBuffer' &&
       typeof obj.byteLength === 'number')
-}
-
-// Node 0.10 supports `ArrayBuffer` but lacks `ArrayBuffer.isView`
-function isArrayBufferView (obj) {
-  return (typeof ArrayBuffer.isView === 'function') && ArrayBuffer.isView(obj)
 }
 
 function numberIsNaN (obj) {
@@ -15836,52 +15907,29 @@ module.exports = TruffleContractSchema;
 }));
 },{"./core":65}],68:[function(require,module,exports){
 module.exports={
-  "_args": [
-    [
-      {
-        "raw": "truffle-contract-schema@^1.0.0",
-        "scope": null,
-        "escapedName": "truffle-contract-schema",
-        "name": "truffle-contract-schema",
-        "rawSpec": "^1.0.0",
-        "spec": ">=1.0.0 <2.0.0",
-        "type": "range"
-      },
-      "/home/alan/src/github.com/trufflesuite/truffle-contract"
-    ]
-  ],
-  "_from": "truffle-contract-schema@>=1.0.0 <2.0.0",
+  "_from": "truffle-contract-schema@^1.0.0",
   "_id": "truffle-contract-schema@1.0.1",
-  "_inCache": true,
+  "_inBundle": false,
+  "_integrity": "sha512-37ZO9FVvmW/PZz/sh00LAz7HN2U4FHERuxI4mCbUR6h3r2cRgZ4YBfzHuAHOnZlrVzM1qx/Dx/1Ng3UyfWseEA==",
   "_location": "/truffle-contract-schema",
-  "_nodeVersion": "6.9.1",
-  "_npmOperationalInternal": {
-    "host": "s3://npm-registry-packages",
-    "tmp": "tmp/truffle-contract-schema-1.0.1.tgz_1509468669623_0.2811872414313257"
-  },
-  "_npmUser": {
-    "name": "gnidan",
-    "email": "nick@gnidan.org"
-  },
-  "_npmVersion": "5.3.0",
   "_phantomChildren": {},
   "_requested": {
+    "type": "range",
+    "registry": true,
     "raw": "truffle-contract-schema@^1.0.0",
-    "scope": null,
-    "escapedName": "truffle-contract-schema",
     "name": "truffle-contract-schema",
+    "escapedName": "truffle-contract-schema",
     "rawSpec": "^1.0.0",
-    "spec": ">=1.0.0 <2.0.0",
-    "type": "range"
+    "saveSpec": null,
+    "fetchSpec": "^1.0.0"
   },
   "_requiredBy": [
     "/"
   ],
   "_resolved": "https://registry.npmjs.org/truffle-contract-schema/-/truffle-contract-schema-1.0.1.tgz",
   "_shasum": "08ceaefe71062a8ac9ab881a77a30fda3744176e",
-  "_shrinkwrap": null,
   "_spec": "truffle-contract-schema@^1.0.0",
-  "_where": "/home/alan/src/github.com/trufflesuite/truffle-contract",
+  "_where": "/Users/dylan/dev/ba/truffle-contract",
   "author": {
     "name": "Tim Coulter",
     "email": "tim.coulter@consensys.net"
@@ -15889,22 +15937,17 @@ module.exports={
   "bugs": {
     "url": "https://github.com/trufflesuite/truffle-schema/issues"
   },
+  "bundleDependencies": false,
   "dependencies": {
     "ajv": "^5.1.1",
     "crypto-js": "^3.1.9-1"
   },
+  "deprecated": false,
   "description": "JSON schema for contract artifacts",
   "devDependencies": {
     "mocha": "^3.2.0",
     "solc": "^0.4.16"
   },
-  "directories": {},
-  "dist": {
-    "integrity": "sha512-37ZO9FVvmW/PZz/sh00LAz7HN2U4FHERuxI4mCbUR6h3r2cRgZ4YBfzHuAHOnZlrVzM1qx/Dx/1Ng3UyfWseEA==",
-    "shasum": "08ceaefe71062a8ac9ab881a77a30fda3744176e",
-    "tarball": "https://registry.npmjs.org/truffle-contract-schema/-/truffle-contract-schema-1.0.1.tgz"
-  },
-  "gitHead": "7337cf5f782dbf5dd52fd952c2752eb69b02c622",
   "homepage": "https://github.com/trufflesuite/truffle-schema#readme",
   "keywords": [
     "ethereum",
@@ -15915,23 +15958,7 @@ module.exports={
   ],
   "license": "MIT",
   "main": "index.js",
-  "maintainers": [
-    {
-      "name": "tcoulter",
-      "email": "tim@timothyjcoulter.com"
-    },
-    {
-      "name": "benjamincburns",
-      "email": "benjamin.c.burns@gmail.com"
-    },
-    {
-      "name": "gnidan",
-      "email": "nick@gnidan.org"
-    }
-  ],
   "name": "truffle-contract-schema",
-  "optionalDependencies": {},
-  "readme": "ERROR: No README data found!",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/trufflesuite/truffle-schema.git"
