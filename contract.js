@@ -391,6 +391,24 @@ var contract = (function(module) {
       });
     },
 
+    getTransaction: function(txHash) {
+      var self = this;
+      return new Promise(function(accept, reject) {
+        self.web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+          if (err) return reject(err);
+
+          if (receipt == null) {
+            return accept(receipt);
+          }
+          return accept({
+            tx: txHash,
+            receipt: receipt,
+            logs: Utils.decodeLogs(self, receipt.logs)
+          });
+        });
+      });
+    },
+
     syncTransaction: function(txHash) {
       var self = this;
       var timeout = this.synchronization_timeout || 240000;
@@ -398,23 +416,17 @@ var contract = (function(module) {
 
       return new Promise(function(accept, reject) {
         var makeAttempt = function() {
-          self.web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
-            if (err) return reject(err);
-
-            if (receipt != null) {
-              return accept({
-                tx: txHash,
-                receipt: receipt,
-                logs: Utils.decodeLogs(self, receipt.logs)
-              });
-            }
-
-            if (timeout > 0 && new Date().getTime() - start > timeout) {
-              return reject(new Error("Transaction " + txHash + " wasn't processed in " + (timeout / 1000) + " seconds!"));
-            }
-
-            setTimeout(makeAttempt, 1000);
-          });
+          self.getTransaction(txHash)
+            .catch(reject)
+            .then(function(receipt) {
+              if (receipt) {
+                return accept(receipt);
+              }
+              if (timeout > 0 && new Date().getTime() - start > timeout) {
+                return reject(new Error("Transaction " + txHash + " wasn't processed in " + (timeout / 1000) + " seconds!"));
+              }
+              setTimeout(makeAttempt, 1000);
+            });
         };
 
         makeAttempt();

@@ -139,9 +139,13 @@ This function creates a new instance of the contract abstraction representing th
 
 Creates an instance of the contract abstraction representing the contract at its deployed address. The deployed address is a special value given to truffle-contract that, when set, saves the address internally so that the deployed address can be inferred from the given Ethereum network being used. This allows you to write code referring to a specific deployed contract without having to manage those addresses yourself. Like `at()`, `deployed()` is thenable, and will resolve to a contract abstraction instance representing the deployed contract after ensuring that code exists at that location and that that address exists on the network being used.
 
+#### `MyContract.getTransaction(txHash)`
+
+Given a transaction hash for a transaction done with an instance of the contract abstracted by this contract abstraction, this returns a Promise which resolves to a object with three properties: `tx` which is the transaction hash passed in, `receipt` which is the transaction receipt as reported by the underlying Web3 instance, and `logs` which are the decoded logs attached with the transaction. Note that this is the same object which is returned when making a transaction with a contract function on a contract abstraction instance. If the transaction has not been confirmed, the promise will resolve to `null`.
+
 #### `MyContract.syncTransaction(txHash)`
 
-Given a transaction hash for a transaction done with an instance of the contract abstracted by this contract abstraction, this returns a Promise which resolves to a object with three properties: `tx` which is the transaction hash passed in, `receipt` which is the transaction receipt as reported by the underlying Web3 instance, and `logs` which are the decoded logs attached with the transaction. Note that this is the same object which is returned when making a transaction with a contract function on a contract abstraction instance.
+Returns a promise that resolves to the same object as `MyContract.getTransaction(txHash)` but will wait up to `MyContract.synchronization_timeout` ms for the transaction to confirm. If the transaction does not confirm within the timeout window, the promise will reject with an Error.
 
 #### `MyContract.link(instance)`
 
